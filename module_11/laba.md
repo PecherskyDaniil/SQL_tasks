@@ -382,35 +382,371 @@ location_id|hierarchy             |location_type|depth_level|full_path          
 
 ## Задача 8
 ### Текст задачи
+Бизнес-задача: Найти рабочие дни в феврале 2024, когда не было добычи в шахте mine_id = 1.
 
+Требования:
+
+С помощью рекурсивного CTE сгенерируйте последовательность дат за февраль 2024
+Используя LEFT JOIN с fact_production и dim_date, найдите:
+Дни без добычи (LEFT JOIN + IS NULL)
+Из них — только рабочие дни (не выходные)
+Выведите: дату, день недели, тип дня (рабочий/выходной)
+Подсчитайте: сколько рабочих дней потеряно?
 ### Решение
 ```
+WITH RECURSIVE date_series AS (
+	SELECT DATE '2024-02-01' AS date
+    UNION ALL
+    SELECT cast(ds.date + INTERVAL '1 day' as date)
+    FROM date_series ds
+    WHERE date < DATE '2024-02-29'
+)
+select 'days without production',count(distinct d_s.date)
+from date_series d_s
+left join dim_date dd on d_s.date=dd.full_date
+left join fact_production fp on fp.date_id=dd.date_id
+where fp.production_id is NULL
+union all
+select 'work days without production',count(distinct d_s.date)
+from date_series d_s
+left join dim_date dd on d_s.date=dd.full_date
+left join fact_production fp on fp.date_id=dd.date_id
+where fp.production_id is NULL
+and EXTRACT(DOW FROM d_s.date) not IN (0, 6)
+;
 
+
+WITH RECURSIVE date_series AS (
+	SELECT DATE '2024-02-01' AS date
+    UNION ALL
+    SELECT cast(ds.date + INTERVAL '1 day' as date)
+    FROM date_series ds
+    WHERE date < DATE '2024-02-29'
+)
+select 	d_s.date,
+		TO_CHAR(d_s.date, 'Day') AS day_of_week,
+        CASE 
+            WHEN EXTRACT(DOW FROM d_s.date) IN (0, 6) THEN 'выходной'
+            ELSE 'рабочий'
+        END AS day_type 
+from date_series d_s 
+order by d_s.date;
 ```
 ### Результат
 ```
+?column?                    |count|
+----------------------------+-----+
+days without production     |    0|
+work days without production|    0|
 
+
+
+date      |day_of_week|day_type|
+----------+-----------+--------+
+2024-02-01|Thursday   |рабочий |
+2024-02-02|Friday     |рабочий |
+2024-02-03|Saturday   |выходной|
+2024-02-04|Sunday     |выходной|
+2024-02-05|Monday     |рабочий |
+2024-02-06|Tuesday    |рабочий |
+2024-02-07|Wednesday  |рабочий |
+2024-02-08|Thursday   |рабочий |
+2024-02-09|Friday     |рабочий |
+2024-02-10|Saturday   |выходной|
+2024-02-11|Sunday     |выходной|
+2024-02-12|Monday     |рабочий |
+2024-02-13|Tuesday    |рабочий |
+2024-02-14|Wednesday  |рабочий |
+2024-02-15|Thursday   |рабочий |
+2024-02-16|Friday     |рабочий |
+2024-02-17|Saturday   |выходной|
+2024-02-18|Sunday     |выходной|
+2024-02-19|Monday     |рабочий |
+2024-02-20|Tuesday    |рабочий |
+2024-02-21|Wednesday  |рабочий |
+2024-02-22|Thursday   |рабочий |
+2024-02-23|Friday     |рабочий |
+2024-02-24|Saturday   |выходной|
+2024-02-25|Sunday     |выходной|
+2024-02-26|Monday     |рабочий |
+2024-02-27|Tuesday    |рабочий |
+2024-02-28|Wednesday  |рабочий |
+2024-02-29|Thursday   |рабочий |
 ```
 ## Задача 9
 ### Текст задачи
+Бизнес-задача: Построить 7-дневное скользящее среднее добычи по шахте «Северная» за I квартал 2024.
 
+Требования:
+
+В первом CTE рассчитайте дневную добычу по mine_id = 1 за I квартал
+Во втором CTE или основном запросе рассчитайте:
+Скользящее среднее за 7 дней (AVG(...) OVER (ORDER BY date_id ROWS BETWEEN 6 PRECEDING AND CURRENT ROW))
+Скользящий максимум за 7 дней
+Отклонение текущего дня от скользящего среднего (%)
+Выведите: дату, дневную добычу, скользящее среднее, отклонение
+Выделите дни с отклонением > 20% (добавьте флаг «Аномалия»)
 ### Решение
 ```
-
+ith daily_production as (
+	select fp.date_id, sum(fp.tons_mined) as tonnage
+	from fact_production fp
+	where fp.mine_id=1 and fp.date_id>20240101 and fp.date_id<20240401
+	group by fp.date_id
+),
+sliding_stat as (
+	select  d_p.date_id,
+			d_p.tonnage,
+			ROUND(AVG(d_p.tonnage) OVER (ORDER BY date_id ROWS BETWEEN 6 PRECEDING AND CURRENT ROW),2) as avg_7days,
+			MAX(d_p.tonnage) OVER (ORDER BY date_id ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) as max_7days,
+			ABS(ROUND(100*d_p.tonnage/(AVG(d_p.tonnage) OVER (ORDER BY date_id ROWS BETWEEN 6 PRECEDING AND CURRENT ROW))-100,1)) as otkl
+	from daily_production d_p
+)
+select  dd.full_date,
+		s_s.tonnage,
+		s_s.avg_7days,
+		s_s.max_7days,
+		s_s.otkl,
+		case 
+			when s_s.otkl>20 then true
+			else false
+		end as anomaly
+from sliding_stat s_s
+join dim_date dd on s_s.date_id=dd.date_id
+order by dd.full_date;
 ```
 ### Результат
 ```
-
+full_date |tonnage|avg_7days|max_7days|otkl|anomaly|
+----------+-------+---------+---------+----+-------+
+2024-01-02| 966.05|   966.05|   966.05| 0.0|false  |
+2024-01-03|1003.54|   984.80|  1003.54| 1.9|false  |
+2024-01-04|1012.47|   994.02|  1012.47| 1.9|false  |
+2024-01-05| 876.40|   964.62|  1012.47| 9.1|false  |
+2024-01-06| 601.91|   892.07|  1012.47|32.5|true   |
+2024-01-07| 595.89|   842.71|  1012.47|29.3|true   |
+2024-01-08|1019.72|   868.00|  1019.72|17.5|false  |
+2024-01-09|1043.77|   879.10|  1043.77|18.7|false  |
+2024-01-10|1042.96|   884.73|  1043.77|17.9|false  |
+2024-01-11|1036.64|   888.18|  1043.77|16.7|false  |
+2024-01-12|1081.82|   917.53|  1081.82|17.9|false  |
+2024-01-13| 497.33|   902.59|  1081.82|44.9|true   |
+2024-01-14| 624.22|   906.64|  1081.82|31.1|true   |
+2024-01-15|1045.14|   910.27|  1081.82|14.8|false  |
+2024-01-16|1021.75|   907.12|  1081.82|12.6|false  |
+2024-01-17| 986.21|   899.02|  1081.82| 9.7|false  |
+2024-01-18| 845.46|   871.70|  1081.82| 3.0|false  |
+2024-01-19| 977.36|   856.78|  1045.14|14.1|false  |
+2024-01-20| 562.52|   866.09|  1045.14|35.1|true   |
+2024-01-21| 638.44|   868.13|  1045.14|26.5|true   |
+2024-01-22| 858.20|   841.42|  1021.75| 2.0|false  |
+2024-01-23| 955.21|   831.91|   986.21|14.8|false  |
+2024-01-24| 990.32|   832.50|   990.32|19.0|false  |
+2024-01-25| 851.98|   833.43|   990.32| 2.2|false  |
+2024-01-26| 944.69|   828.77|   990.32|14.0|false  |
+2024-01-27| 638.92|   839.68|   990.32|23.9|true   |
+2024-01-28| 655.73|   842.15|   990.32|22.1|true   |
+2024-01-29| 996.64|   861.93|   996.64|15.6|false  |
+2024-01-30| 980.44|   865.53|   996.64|13.3|false  |
+2024-01-31|1036.32|   872.10|  1036.32|18.8|false  |
+2024-02-01|1051.30|   900.58|  1051.30|16.7|false  |
+2024-02-02|1141.02|   928.62|  1141.02|22.9|true   |
+2024-02-03| 626.75|   926.89|  1141.02|32.4|true   |
+2024-02-04| 632.53|   923.57|  1141.02|31.5|true   |
+2024-02-05|1047.58|   930.85|  1141.02|12.5|false  |
+2024-02-06|1051.71|   941.03|  1141.02|11.8|false  |
+2024-02-07|1034.55|   940.78|  1141.02|10.0|false  |
+2024-02-08|1068.22|   943.19|  1141.02|13.3|false  |
+2024-02-09|1141.87|   943.32|  1141.87|21.0|true   |
+2024-02-10| 643.44|   945.70|  1141.87|32.0|true   |
+2024-02-11| 658.92|   949.47|  1141.87|30.6|true   |
+2024-02-12|1075.28|   953.43|  1141.87|12.8|false  |
+2024-02-13|1113.91|   962.31|  1141.87|15.8|false  |
+2024-02-14|1064.14|   966.54|  1141.87|10.1|false  |
+2024-02-15|1081.88|   968.49|  1141.87|11.7|false  |
+2024-02-16|1049.02|   955.23|  1113.91| 9.8|false  |
+2024-02-17| 610.05|   950.46|  1113.91|35.8|true   |
+2024-02-18| 635.50|   947.11|  1113.91|32.9|true   |
+2024-02-19|1073.97|   946.92|  1113.91|13.4|false  |
+2024-02-20| 950.39|   923.56|  1081.88| 2.9|false  |
+2024-02-21|1020.52|   917.33|  1081.88|11.2|false  |
+2024-02-22| 852.45|   884.56|  1073.97| 3.6|false  |
+2024-02-23|1102.40|   892.18|  1102.40|23.6|true   |
+2024-02-24| 608.40|   891.95|  1102.40|31.8|true   |
+2024-02-25| 649.04|   893.88|  1102.40|27.4|true   |
+2024-02-26|1085.81|   895.57|  1102.40|21.2|true   |
+2024-02-27| 902.64|   888.75|  1102.40| 1.6|false  |
+2024-02-28| 991.95|   884.67|  1102.40|12.1|false  |
+2024-02-29|1102.67|   920.42|  1102.67|19.8|false  |
+2024-03-01|1111.54|   921.72|  1111.54|20.6|true   |
+2024-03-02| 705.14|   935.54|  1111.54|24.6|true   |
+2024-03-03| 647.49|   935.32|  1111.54|30.8|true   |
+2024-03-04|1112.31|   939.11|  1112.31|18.4|false  |
+2024-03-05|1124.73|   970.83|  1124.73|15.9|false  |
+2024-03-06|1106.12|   987.14|  1124.73|12.1|false  |
+2024-03-07|1075.02|   983.19|  1124.73| 9.3|false  |
+2024-03-08|1132.88|   986.24|  1132.88|14.9|false  |
+2024-03-09| 629.10|   975.38|  1132.88|35.5|true   |
+2024-03-10| 556.23|   962.34|  1132.88|42.2|true   |
+2024-03-11|1099.23|   960.47|  1132.88|14.4|false  |
+2024-03-12|1183.21|   968.83|  1183.21|22.1|true   |
+2024-03-13|1133.83|   972.79|  1183.21|16.6|false  |
+2024-03-14| 966.11|   957.23|  1183.21| 0.9|false  |
+2024-03-15|1082.68|   950.06|  1183.21|14.0|false  |
+2024-03-16| 670.85|   956.02|  1183.21|29.8|true   |
+2024-03-17| 546.30|   954.60|  1183.21|42.8|true   |
+2024-03-18|1022.01|   943.57|  1183.21| 8.3|false  |
+2024-03-19|1081.10|   928.98|  1133.83|16.4|false  |
+2024-03-20|1044.87|   916.27|  1082.68|14.0|false  |
+2024-03-21| 994.28|   920.30|  1082.68| 8.0|false  |
+2024-03-22|1179.10|   934.07|  1179.10|26.2|true   |
+2024-03-23| 638.47|   929.45|  1179.10|31.3|true   |
+2024-03-24| 636.09|   942.27|  1179.10|32.5|true   |
+2024-03-25|1123.26|   956.74|  1179.10|17.4|false  |
+2024-03-26|1139.73|   965.11|  1179.10|18.1|false  |
+2024-03-27|1219.29|   990.03|  1219.29|23.2|true   |
+2024-03-28|1141.62|  1011.08|  1219.29|12.9|false  |
+2024-03-29|1021.99|   988.64|  1219.29| 3.4|false  |
+2024-03-30| 574.69|   979.52|  1219.29|41.3|true   |
+2024-03-31| 642.97|   980.51|  1219.29|34.4|true   |
 ```
 
 ## Задача 10
 ### Текст задачи
+Бизнес-задача: Создать набор объектов для модуля «Контроль качества руды» MES-системы.
 
+Требования:
+
+Создайте VIEW v_ore_quality_detail:
+
+Все поля fact_ore_quality + расшифровки из справочников (шахта, смена, сорт руды)
+Расчётный столбец: категория качества (CASE WHEN fe_content >= 65 THEN 'Богатая' ...)
+Создайте табличную функцию fn_ore_quality_stats(p_mine_id INT, p_year INT, p_month INT):
+
+Возвращает статистику по качеству руды: количество проб, среднее Fe, стандартное отклонение Fe, доля проб с Fe >= 55%
+Напишите запрос с CTE, который:
+
+CTE 1: агрегирует данные из v_ore_quality_detail по месяцам
+CTE 2: рассчитывает скользящее среднее Fe за 3 месяца
+Основной запрос: выводит месяц, среднее Fe, скользящее среднее, тренд (рост/снижение)
 ### Решение
 ```
+CREATE OR REPLACE VIEW v_ore_quality_detail AS
+SELECT 
+    f.*,
+    dd.full_date,
+    m.mine_name,
+    s.shift_name,
+    og.grade_name AS ore_grade_name,
+    CASE 
+        WHEN f.fe_content >= 65 THEN 'Богатая'
+        WHEN f.fe_content >= 55 AND f.fe_content < 65 THEN 'Средняя'
+        WHEN f.fe_content >= 45 AND f.fe_content < 55 THEN 'Бедная'
+        WHEN f.fe_content < 45 THEN 'Очень бедная'
+        ELSE 'Не определено'
+    END AS quality_category
+FROM fact_ore_quality f
+LEFT JOIN dim_mine m ON f.mine_id = m.mine_id
+LEFT JOIN dim_shift s ON f.shift_id = s.shift_id
+LEFT JOIN dim_ore_grade og ON f.ore_grade_id = og.ore_grade_id
+left join dim_date dd on dd.date_id=f.date_id;
 
+CREATE OR REPLACE FUNCTION fn_ore_quality_stats(
+    p_mine_id INT,
+    p_year INT,
+    p_month INT
+)
+RETURNS TABLE (
+    total_samples BIGINT,
+    avg_fe_content NUMERIC(10,2),
+    stddev_fe_content NUMERIC(10,2),
+    rich_ore_share NUMERIC(5,2)
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        COUNT(*) AS total_samples,
+        ROUND(AVG(fe_content), 2) AS avg_fe_content,
+        ROUND(STDDEV(fe_content), 2) AS stddev_fe_content,
+        ROUND(
+            (COUNT(CASE WHEN fe_content >= 55 THEN 1 END)::NUMERIC / COUNT(*)::NUMERIC) * 100, 
+            2
+        ) AS rich_ore_share
+    FROM fact_ore_quality f
+	join dim_date dd on f.date_id=dd.date_id
+    WHERE f.mine_id = p_mine_id
+         AND EXTRACT(YEAR FROM dd.full_date) = p_year
+         AND EXTRACT(MONTH FROM dd.full_date) = p_month;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT 
+    m.mine_name,
+    stats.total_samples,
+    stats.avg_fe_content,
+    stats.stddev_fe_content,
+    stats.rich_ore_share
+FROM dim_mine m
+CROSS JOIN LATERAL fn_ore_quality_stats(m.mine_id, 2024, 3) stats
+WHERE m.status = 'active'
+ORDER BY stats.avg_fe_content DESC;
+
+WITH monthly_stats AS (
+    SELECT 
+        DATE_TRUNC('month', full_date) AS month,
+        ROUND(AVG(fe_content), 2) AS avg_fe_content,
+        COUNT(*) AS sample_count
+    FROM v_ore_quality_detail
+    WHERE full_date >= '2024-01-01' 
+        AND full_date < '2025-01-01'
+    GROUP BY DATE_TRUNC('month', full_date)
+),
+moving_average AS (
+    SELECT 
+        month,
+        avg_fe_content,
+        sample_count,
+        ROUND(
+            AVG(avg_fe_content) OVER (
+                ORDER BY month 
+                ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+            ), 
+            2
+        ) AS moving_avg_3m
+    FROM monthly_stats
+)
+SELECT 
+    TO_CHAR(month, 'YYYY-MM') AS month,
+    avg_fe_content,
+    moving_avg_3m,
+    CASE 
+        WHEN avg_fe_content > LAG(avg_fe_content) OVER (ORDER BY month) THEN 'рост'
+        WHEN avg_fe_content < LAG(avg_fe_content) OVER (ORDER BY month) THEN 'снижение'
+        WHEN avg_fe_content = LAG(avg_fe_content) OVER (ORDER BY month) THEN '➡стабильно'
+        ELSE 'нет данных'
+    END AS trend
+FROM moving_average
+ORDER BY month;
 ```
 ### Результат
 ```
+mine_name       |total_samples|avg_fe_content|stddev_fe_content|rich_ore_share|
+----------------+-------------+--------------+-----------------+--------------+
+Шахта "Северная"|          184|         55.48|             5.85|         57.61|
+Шахта "Южная"   |          116|         51.98|             5.76|         34.48|
 
+month  |avg_fe_content|moving_avg_3m|trend     |
+-------+--------------+-------------+----------+
+2024-01|         53.96|        53.96|нет данных|
+2024-02|         53.57|        53.77|снижение  |
+2024-03|         54.12|        53.88|рост      |
+2024-04|         53.97|        53.89|снижение  |
+2024-05|         56.17|        54.75|рост      |
+2024-06|         56.79|        55.64|рост      |
+2024-07|         55.88|        56.28|снижение  |
+2024-08|         55.86|        56.18|снижение  |
+2024-09|         57.50|        56.41|рост      |
+2024-10|         53.97|        55.78|снижение  |
+2024-11|         54.70|        55.39|рост      |
+2024-12|         53.65|        54.11|снижение  |
 ```
